@@ -1,0 +1,76 @@
+name: XenoCI artifact upload download and cache
+run-name: artifact-check-${{ inputs.path }}-${{ github.run_id }}
+# Manual only (fix-artifact T7 2026-10-22). Job 1 saves a cache and uploads an artifact, job 2 on a fresh VM downloads it,
+# lists it and restores the cache. path=pin forces the office pin verdict (http://artifacts.ci.xeno/) when the Mac answers it.
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: auto (probe verdict) or pin (force the office pin when it answers)
+        default: auto
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: artifact-check
+  cancel-in-progress: false
+jobs:
+  upload:
+    runs-on: xenoci-macos
+    timeout-minutes: 15
+    steps:
+      - name: Results path
+        run: |
+          for i in $(seq 1 15); do [ -f "$HOME/.xenoci-cache-probe.done" ] && break; sleep 1; done
+          if [ "${{ inputs.path }}" = pin ]; then
+            code=$(curl -sS --proxytunnel --connect-timeout 2 -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' http://artifacts.ci.xeno/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL || true)
+            echo "pin answer=$code"
+            if [ "$code" = 401 ]; then printf 'http://artifacts.ci.xeno/' > "$HOME/.xenoci-results-url"; else echo "PIN_UNAVAILABLE"; fi
+          fi
+          echo "verdict=$(cat "$HOME/.xenoci-results-url" 2>/dev/null || echo none)"
+      - name: Make data
+        run: |
+          mkdir -p out cachedir
+          head -c 3000000 /dev/urandom > out/blob.bin
+          (cd out && shasum -a 256 blob.bin | tee blob.sha256)
+          cp out/blob.sha256 cachedir/
+      - uses: actions/cache/save@v4
+        with:
+          path: cachedir
+          key: artifact-check-${{ github.run_id }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blob-${{ github.run_id }}
+          path: out/
+          if-no-files-found: error
+      - run: echo XENOCI_UPLOAD_PASS
+  download:
+    needs: upload
+    runs-on: xenoci-macos
+    timeout-minutes: 15
+    steps:
+      - name: Results path
+        run: |
+          for i in $(seq 1 15); do [ -f "$HOME/.xenoci-cache-probe.done" ] && break; sleep 1; done
+          if [ "${{ inputs.path }}" = pin ]; then
+            code=$(curl -sS --proxytunnel --connect-timeout 2 -m 5 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' http://artifacts.ci.xeno/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL || true)
+            echo "pin answer=$code"
+            if [ "$code" = 401 ]; then printf 'http://artifacts.ci.xeno/' > "$HOME/.xenoci-results-url"; else echo "PIN_UNAVAILABLE"; fi
+          fi
+          echo "verdict=$(cat "$HOME/.xenoci-results-url" 2>/dev/null || echo none)"
+      - uses: actions/download-artifact@v4
+        with:
+          name: blob-${{ github.run_id }}
+          path: got/
+      - name: Verify artifact
+        run: |
+          cd got && shasum -a 256 -c blob.sha256 && echo XENOCI_DOWNLOAD_PASS
+      - id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: cachedir
+          key: artifact-check-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - run: |
+          echo "cache-hit=${{ steps.restore.outputs.cache-hit }}"
+          cmp cachedir/blob.sha256 got/blob.sha256 && echo XENOCI_CACHE_RESTORE_PASS
