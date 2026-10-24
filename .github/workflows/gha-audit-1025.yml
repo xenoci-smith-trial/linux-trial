@@ -1,0 +1,81 @@
+name: gha-audit-1025
+run-name: gha-audit-1025-${{ inputs.scenario }}-${{ github.run_id }}
+# gha-audit-1025 (2026-10-25): manual only. One scenario per dispatch, at most 3 xenoci jobs at a time.
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: matrix | concurrency | services | fail | cancel | flaky | mixed
+        required: true
+        default: matrix
+      hold:
+        description: seconds to hold (cancel and concurrency scenarios)
+        default: "120"
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: gha-audit-1025-${{ inputs.scenario == 'concurrency' && 'conc' || github.run_id }}
+  cancel-in-progress: ${{ inputs.scenario == 'concurrency' }}
+jobs:
+  matrix:
+    if: inputs.scenario == 'matrix'
+    strategy:
+      fail-fast: true
+      matrix:
+        n: [1, 2]
+        include:
+          - n: 3
+            fail: true
+    runs-on: xenoci-macos
+    timeout-minutes: 10
+    steps:
+      - run: |
+          echo "AUDIT_MATRIX n=${{ matrix.n }} fail=${{ matrix.fail }}"
+          if [ "${{ matrix.fail }}" = true ]; then sleep 5; echo AUDIT_MATRIX_FAIL_MARK; exit 3; fi
+          sleep 60
+          echo AUDIT_MATRIX_DONE
+  hold:
+    if: inputs.scenario == 'concurrency' || inputs.scenario == 'cancel'
+    runs-on: xenoci-macos
+    timeout-minutes: 15
+    steps:
+      - run: |
+          echo "AUDIT_HOLD start $(date -u +%FT%TZ) for ${{ inputs.hold }}s"
+          for i in $(seq 1 ${{ inputs.hold }}); do sleep 1; [ $((i % 30)) = 0 ] && echo "AUDIT_HOLD tick $i"; done
+          echo AUDIT_HOLD_DONE
+  services:
+    if: inputs.scenario == 'services'
+    runs-on: xenoci-macos
+    timeout-minutes: 10
+    services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - run: echo AUDIT_SERVICES_STEP_RAN
+  fail:
+    if: inputs.scenario == 'fail'
+    runs-on: xenoci-macos
+    timeout-minutes: 10
+    steps:
+      - run: echo AUDIT_FAIL_BEFORE
+      - name: Missing tool
+        run: |
+          echo "AUDIT_SEARCH_NEEDLE_7f3a"
+          xcodebuild -project DoesNotExist.xcodeproj -scheme App build
+  flaky:
+    if: inputs.scenario == 'flaky'
+    runs-on: xenoci-macos
+    timeout-minutes: 10
+    steps:
+      - run: |
+          echo "AUDIT_FLAKY attempt=${{ github.run_attempt }}"
+          if [ "${{ github.run_attempt }}" = 1 ]; then exit 1; fi
+          echo AUDIT_FLAKY_PASS
+  mixed:
+    if: inputs.scenario == 'mixed'
+    runs-on: [xenoci-macos, ubuntu-latest]
+    timeout-minutes: 5
+    steps:
+      - run: echo AUDIT_MIXED_SHOULD_NOT_RUN
