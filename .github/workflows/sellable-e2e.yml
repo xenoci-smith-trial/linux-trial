@@ -1,0 +1,29 @@
+name: sellable-e2e
+run-name: se-${{ inputs.runner }}-${{ inputs.mode }}
+# sellable-e2e 2026-10-28: customer-path check (dev). Manual dispatch only.
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        required: true
+        default: xenoci-2vcpu-ubuntu-2404
+      mode:
+        description: ok or fail
+        default: ok
+permissions:
+  contents: read
+jobs:
+  e2e:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: host
+        run: |
+          uname -a; nproc; (free -m || vm_stat) | head -3
+          echo "SELLABLE_E2E runner=$RUNNER_NAME start=$(date -u +%FT%TZ)"
+          sleep 20
+      - name: result
+        run: |
+          if [ "${{ inputs.mode }}" = fail ]; then echo "SELLABLE_E2E_FAIL intentional"; exit 3; fi
+          echo SELLABLE_E2E_PASS
