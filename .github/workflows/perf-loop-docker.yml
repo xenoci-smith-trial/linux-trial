@@ -1,0 +1,28 @@
+name: perf-loop-docker
+run-name: perf-loop-docker ${{ inputs.tag }} ${{ github.run_attempt }}
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: perf-loop-docker
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: xenoci-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - name: Workload checkout
+        uses: actions/checkout@v4
+        with:
+          repository: mendhak/docker-http-https-echo
+          ref: 184fd2ab87a9dfbac4d25f1260f6028df855aead
+          persist-credentials: false
+      - name: Docker build
+        run: |
+          printf 'PERF_BUILD_ID=%s\n' "${{ github.run_id }}-${{ github.run_attempt }}"
+          docker buildx build --progress plain --output type=cacheonly \
+            --build-arg BUILD_ID="${{ github.run_id }}-${{ github.run_attempt }}" .
